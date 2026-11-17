@@ -79,7 +79,7 @@ __global__ void pca_reg_build_kernel(uint32_t n, float4* sorted, uint32_t* box,
                                      float4* nodes, int4* meta, int32_t* ranges) {
     const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    SlangPcaReg::pca_reg_build(i, n, sorted, box, nodes, (uint32_t*)nodes, meta, ranges);
+    SlangPcaReg::pca_reg_build(i, n, sorted, box, nodes, (uint32_t*)nodes, (int32_t*)meta, ranges);
 }
 
 // red: [5][kOwnerBlock / 32] of __shared__ floats, the caller's.

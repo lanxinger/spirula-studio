@@ -314,11 +314,11 @@ matcher's 32-word descriptor loop is **8x slower** unrolled on the same M2
 (49 -> 416 ms per 8192x8192 pair). Use it where a small indexed array must live
 in registers, and measure on Apple either way.
 
-## MoltenVK (macOS): two rules the SPIR-V -> MSL step imposes
+## MoltenVK (macOS): three rules the SPIR-V -> MSL step imposes
 
 MoltenVK translates our SPIR-V to Metal Shading Language through
-SPIRV-Cross, and two of its habits turn correct SPIR-V into wrong or
-uncompilable MSL. Both are invisible on every other driver, and both were
+SPIRV-Cross, and three of its habits turn correct SPIR-V into wrong or
+uncompilable MSL. All are invisible on every other driver, and all were
 found the same way: `spirv-cross --msl --stage comp build_vulkan/spirv/<blob>.spv`
 prints exactly what the Metal compiler will see, so read that before
 guessing.
@@ -333,7 +333,8 @@ invalidated, so every such kernel trained on zeros. Write in-place updates
 so the last store comes after the last use — the optimizers zero the
 gradient at the end of the kernel for this reason — or force the load into
 an MSL temporary by giving it a bitcast (`asfloat` off a `uint*` buffer,
-as `misc.slang`'s RoPE does).
+as `misc.slang`'s RoPE does). `optim_geometry`'s densify score read back
+the scale it had just stored this way; `fpbo_split_parity` caught it.
 
 Groupshared memory is not exempt, and a loop is where it bites. `vis_blit`'s
 BVH descent pops a node index off `_blit_stack[tid][stackSize]` and then
@@ -356,6 +357,12 @@ every pipeline in it fails to create. So `(int*)(float* addr)` is out
 pointer arithmetic hits the same bug with the pointer's own `ulong`, so
 `background_sh.slang` addresses SH coefficients as flat `float*` and calls
 the `float*` overloads.
+
+**3. An atomic must address a scalar.** Metal has no atomic on a vector
+element: `InterlockedOr(meta[p].y, ...)` through an `int4*` becomes
+`atomic_fetch_or_explicit(&meta[i].y, ...)`, rejected as "address of vector
+element requested", and again the whole library fails. `pca_reg_build`
+addresses those rows as `int*` words instead.
 
 Beyond those, MoltenVK compiles every shader with Metal fast-math unless
 told not to. `VulkanContext::init()` turns it off through
