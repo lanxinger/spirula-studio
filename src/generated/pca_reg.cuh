@@ -269,7 +269,7 @@ inline __device__ bool pca_reg_less_0(uint3  a_1, uint3  b_1)
     return _S19;
 }
 
-inline __device__ void pca_reg_build(uint i_5, uint n_1, float4  * sorted_2, uint * box_2, float4  * nodes_0, uint * node_bits_0, int4  * meta_0, int * ranges_0)
+inline __device__ void pca_reg_build(uint i_5, uint n_1, float4  * sorted_2, uint * box_2, float4  * nodes_0, uint * node_bits_0, int * meta_0, int * ranges_0)
 {
     int _S22 = int(i_5 | 2147483648U);
     float3  lo_1 = float3 {(*(sorted_2 + i_5)).x, (*(sorted_2 + i_5)).y, (*(sorted_2 + i_5)).z};
@@ -294,14 +294,17 @@ inline __device__ void pca_reg_build(uint i_5, uint n_1, float4  * sorted_2, uin
         {
             p_3 = first_0 - 1U;
         }
+        uint _S22a = 4U * p_3;
+        int _S22b;
         if(left_0)
         {
-            *&((meta_0 + p_3)->x) = current_0;
+            _S22b = int(0);
         }
         else
         {
-            *&((meta_0 + p_3)->y) = current_0;
+            _S22b = int(1);
         }
+        *(meta_0 + (_S22a + uint(_S22b))) = current_0;
         __threadfence();
         int * _S25 = ranges_0 + p_3;
         uint _S26;
@@ -327,17 +330,16 @@ inline __device__ void pca_reg_build(uint i_5, uint n_1, float4  * sorted_2, uin
             first_0 = uint(other_0);
         }
         __threadfence();
-        int sib_0;
+        int _S27;
         if(left_0)
         {
-            int _S27 = atomicOr(&((meta_0 + p_3)->y), int(0));
-            sib_0 = _S27;
+            _S27 = int(1);
         }
         else
         {
-            int _S28 = atomicOr(&((meta_0 + p_3)->x), int(0));
-            sib_0 = _S28;
+            _S27 = int(0);
         }
+        int sib_0 = atomicOr(meta_0 + (_S22a + uint(_S27)), int(0));
         uint _S29 = uint(sib_0);
         if((_S29 & 2147483648U) != 0U)
         {
@@ -362,9 +364,8 @@ inline __device__ void pca_reg_build(uint i_5, uint n_1, float4  * sorted_2, uin
         uint _S33 = 2U * p_3;
         *(nodes_0 + _S33) = make_float4 (lo_2.x, lo_2.y, lo_2.z, 0.0f);
         *(nodes_0 + (_S33 + 1U)) = make_float4 (hi_0.x, hi_0.y, hi_0.z, 0.0f);
-        int4  * _S34 = meta_0 + p_3;
-        *&(_S34->z) = int(first_0);
-        *&(_S34->w) = int(last_0);
+        *(meta_0 + (_S22a + 2U)) = int(first_0);
+        *(meta_0 + (_S22a + 3U)) = int(last_0);
         int _S35 = int(p_3);
         bool _S36;
         if(first_0 == 0U)

@@ -292,6 +292,10 @@ HostGrad host_grad(const Cloud& c, const std::vector<int32_t>& perm,
         const double ndot = dot(normal, s.vec[0]);
         const bool directional = s.ev[1] - s.ev[0] > 1e-6 * std::max(spread, 1e-30);
         const double align = directional && w.normal != 0 ? std::fabs(ndot) : 1.0;
+        // |n . v_1| has a kink at 0. A clean gap leaves v_1 good to ~1e-5 in
+        // float, so below 1e-4 the device may take the other side of it.
+        if (directional && w.normal != 0 && std::fabs(ndot) < 1e-4)
+            for (int64_t id : ids) h.dirty[id] = 1;
         if (directional && w.normal != 0) {
             D3 u{};
             for (int m = 1; m < 3; m++) {
@@ -350,10 +354,12 @@ std::vector<double> row_d2(const Cloud& c, int64_t self, const int32_t* row, int
     return d;
 }
 
-bool same_d2(const std::vector<double>& a, const std::vector<double>& b) {
+// `tie`: relative distance under which either of two candidates may be chosen.
+bool same_d2(const std::vector<double>& a, const std::vector<double>& b, double tie = 0.0) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); i++)
-        if (std::fabs(a[i] - b[i]) > 1e-6 * std::max(1.0, b[i])) return false;
+        if (std::fabs(a[i] - b[i]) > std::max(1e-6 * std::max(1.0, b[i]), tie * b[i]))
+            return false;
     return true;
 }
 
@@ -469,7 +475,9 @@ void test_cloud(bool messy, int k) {
             }
             std::sort(cand.begin(), cand.end());
             cand.resize(std::min<size_t>(cand.size(), (size_t)k));
-            if (!same_d2(row_d2(c, self, &best.nbrs[r * k], k), cand)) bad++;
+            // The slab's keys drop 8 of 23 mantissa bits: nearer than 2^-15 is a
+            // tie the slot breaks, and one ulp of rounding can cross a bucket.
+            if (!same_d2(row_d2(c, self, &best.nbrs[r * k], k), cand, 0x1p-14)) bad++;
         }
         check(bad == 0, tag + "best-of-window = nearest k of the window (" + std::to_string(bad) +
                             " wrong)");

@@ -96,7 +96,7 @@ struct PcaBuildParams {  // pushed directly
     uint* box;
     float4* nodes;
     uint* node_bits;   // nodes again, for the atomic reads
-    int4* meta;
+    int* meta;         // int4 rows as words
     int* ranges;
     uint n, wgs_per_row;
 };

@@ -243,7 +243,9 @@ void fused_optim_3dgs_geometry(uint3 wg: SV_GroupID,
             if ((kGqMask & 8) == 0) p.v_opacities[gid] = 0.0f;
         }
 
-        // update scales
+        // update scales; stored after the means, whose step still reads the
+        // pre-update `scale` (MoltenVK would re-read it past an earlier store)
+        float3 new_scale;
         {
             float g1[3], g2[3];
             oq_state_read<3>(kNonShQuant != 0, p.nq_scales_packed,
@@ -262,12 +264,8 @@ void fused_optim_3dgs_geometry(uint3 wg: SV_GroupID,
             }
             float3 g1v = float3(g1[0], g1[1], g1[2]);
             float3 g2v = float3(g2[0], g2[1], g2[2]);
-            float3 new_scale = scale - lr_scales * g1v /
-                                           (oq_sqrt3(g2v * ibc2) +
-                                            float3(kAdamEps));
-            p.scales[3 * gid] = new_scale.x;
-            p.scales[3 * gid + 1] = new_scale.y;
-            p.scales[3 * gid + 2] = new_scale.z;
+            new_scale = scale - lr_scales * g1v /
+                                    (oq_sqrt3(g2v * ibc2) + float3(kAdamEps));
             if (kNonShQuant != 0) {
                 [ForceUnroll]
                 for (int i = 0; i < 3; i++) {
@@ -416,9 +414,6 @@ void fused_optim_3dgs_geometry(uint3 wg: SV_GroupID,
             float3 new_mean = mean - lr_means * g1v /
                                          (oq_sqrt3(g2v * ibc2) +
                                           float3(kAdamEps));
-            p.means[3 * gid] = new_mean.x;
-            p.means[3 * gid + 1] = new_mean.y;
-            p.means[3 * gid + 2] = new_mean.z;
             if (kNonShQuant != 0) {
                 [ForceUnroll]
                 for (int i = 0; i < 3; i++) {
@@ -434,16 +429,17 @@ void fused_optim_3dgs_geometry(uint3 wg: SV_GroupID,
                 }
             }
             if (projective_active) {
-                float3 updated_mean = new_mean;
-                float3 updated_scale = float3(p.scales[3*gid],p.scales[3*gid+1],p.scales[3*gid+2]);
                 projective_depth_update(projective_anchor,projective_camera,p.depth_lr,p.depth_angular_lr,
                     p.depth_photo != 0,p.depth_relative != 0,projective_gradient,p.depth_information[gid],
-                    projective_state,updated_mean,updated_scale,p.depth_has_bound != 0 ? p.depth_angular_bound[gid] : -1.f);
-                p.means[3*gid] = updated_mean.x; p.means[3*gid+1] = updated_mean.y; p.means[3*gid+2] = updated_mean.z;
-                p.scales[3*gid] = updated_scale.x; p.scales[3*gid+1] = updated_scale.y; p.scales[3*gid+2] = updated_scale.z;
+                    projective_state,new_mean,new_scale,p.depth_has_bound != 0 ? p.depth_angular_bound[gid] : -1.f);
                 p.depth_states[gid] = projective_state;
             }
-
+            p.means[3 * gid] = new_mean.x;
+            p.means[3 * gid + 1] = new_mean.y;
+            p.means[3 * gid + 2] = new_mean.z;
+            p.scales[3 * gid] = new_scale.x;
+            p.scales[3 * gid + 1] = new_scale.y;
+            p.scales[3 * gid + 2] = new_scale.z;
         }
 
         // update features_dc (only under kNonShQuant; the fp32 path keeps

@@ -94,12 +94,12 @@ bool pca_reg_less(uint3 a, uint3 b) {
     return a.x != b.x ? a.x < b.x : (a.y != b.y ? a.y < b.y : a.z < b.z);
 }
 
-// Point i climbs while it is the second child to arrive, merging boxes. The
-// sibling's box and reference are read with atomics: written by another
-// thread, possibly another multiprocessor, whose cache this one does not see.
+// Point i climbs while it is the second child to arrive, merging boxes, and
+// reads its sibling's box and reference with atomics (another multiprocessor's
+// writes). meta is int4 rows as words: Metal has no atomic on a vector element.
 [CudaDeviceExport]
 void pca_reg_build(uint i, uint n, float4* sorted, uint* box, float4* nodes, uint* node_bits,
-                   int4* meta, int* ranges) {
+                   int* meta, int* ranges) {
     uint first = i, last = i;
     int current = int(i | kPcaLeafFlag);
     float3 lo = sorted[i].xyz, hi = lo;
@@ -107,8 +107,7 @@ void pca_reg_build(uint i, uint n, float4* sorted, uint* box, float4* nodes, uin
     for (;;) {
         bool left = pca_reg_less(dr, dl);
         uint p = left ? last : first - 1;
-        if (left) meta[p].x = current;
-        else meta[p].y = current;
+        meta[4 * p + (left ? 0 : 1)] = current;
         DeviceMemoryBarrier();
         int other;
         InterlockedCompareExchange(ranges[p], -1, int(left ? first : last), other);
@@ -117,8 +116,7 @@ void pca_reg_build(uint i, uint n, float4* sorted, uint* box, float4* nodes, uin
         else first = uint(other);
         DeviceMemoryBarrier();
         int sib;
-        if (left) InterlockedOr(meta[p].y, 0, sib);
-        else InterlockedOr(meta[p].x, 0, sib);
+        InterlockedOr(meta[4 * p + (left ? 1 : 0)], 0, sib);
         if ((uint(sib) & kPcaLeafFlag) != 0u) {
             float3 q = sorted[uint(sib) & ~kPcaLeafFlag].xyz;
             lo = min(lo, q);
@@ -136,8 +134,8 @@ void pca_reg_build(uint i, uint n, float4* sorted, uint* box, float4* nodes, uin
         }
         nodes[2 * p] = float4(lo, 0.0);
         nodes[2 * p + 1] = float4(hi, 0.0);
-        meta[p].z = int(first);
-        meta[p].w = int(last);
+        meta[4 * p + 2] = int(first);
+        meta[4 * p + 3] = int(last);
         current = int(p);
         if (first == 0 && last == n - 1) {
             ranges[n - 1] = int(p);

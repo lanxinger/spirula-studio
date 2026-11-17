@@ -149,7 +149,7 @@ Keep reference dumps out of git (`parity_refs/` is gitignored).
 
 ### macOS / MoltenVK
 
-All 17 parity tools pass against a CUDA reference on Apple silicon, at
+All 24 parity tools pass against a CUDA reference on Apple silicon, at
 essentially the Linux numbers (`engine_render_parity`'s blit channel: 0.157%
 of bytes on macOS against 0.152% on Linux, cap 0.2%).
 
