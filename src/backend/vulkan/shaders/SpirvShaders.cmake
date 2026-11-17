@@ -14,6 +14,14 @@
 # Where SlangcRetry.cmake lives. Captured at file scope: inside the function
 # below, CMAKE_CURRENT_LIST_DIR is the *caller's* directory, not this one.
 set(SS_SPIRV_LIST_DIR ${CMAKE_CURRENT_LIST_DIR})
+
+# Blobs (source stem, or stem.entry) MoltenVK compiles without fast math, for
+# parity with CUDA (backend/vulkan/README.md). fpbo, rasterize_bwd, fused_ssim
+# and the 2D projection stay off the list; most of the speedup is theirs.
+set(SS_SPIRV_PRECISE
+    multi_scale_loss optim_geometry optim_color ppisp_image
+    meshing meshing_raster rasterize_moments
+    projection_fwd.projection_fwd_3dgut)
 #
 # ss_setup_spirv(<shared_dir> <vk_dir> <slangc> <spirv_dir> <embed_cpp> <debug>)
 # defines the custom commands producing <embed_cpp>.
@@ -76,6 +84,7 @@ function(ss_setup_spirv shared_dir vk_dir slangc spirv_dir embed_cpp debug)
 
     string(REPLACE "\n" ";" manifest_lines "${manifest}")
     set(blob_outputs "")
+    set(precise_hits "")
     foreach(line ${manifest_lines})
         if(line STREQUAL "")
             continue()
@@ -95,9 +104,30 @@ function(ss_setup_spirv shared_dir vk_dir slangc spirv_dir embed_cpp debug)
         string(REPLACE " " ";" dep_list "${deps}")
 
         set(out ${spirv_dir}/${name}.spv)
+        # Only MoltenVK compiles with fast math, so only macOS marks blobs.
+        get_filename_component(stem ${source} NAME_WE)
+        set(precise_key "")
+        if(APPLE)
+            foreach(_key ${stem} ${stem}.${entry})
+                if(_key IN_LIST SS_SPIRV_PRECISE)
+                    set(precise_key ${_key})
+                endif()
+            endforeach()
+        endif()
+        set(slangc_out ${out})
+        set(post_cmd "")
+        set(post_deps "")
+        set(comment "SPIR-V ${name}")
+        if(precise_key)
+            list(APPEND precise_hits ${precise_key})
+            set(slangc_out ${spirv_dir}/${name}.raw.spv)
+            set(post_cmd COMMAND ${tool_exe} precise ${slangc_out} ${out})
+            set(post_deps ${tool_exe})
+            set(comment "SPIR-V ${name} (precise)")
+        endif()
         # Through SlangcRetry.cmake rather than directly: see the crash it
         # exists for. '|' joins the arguments because -D cannot carry a list.
-        set(_blob_cmd "${slangc}|${source}|-entry|${entry}|-o|${out}")
+        set(_blob_cmd "${slangc}|${source}|-entry|${entry}|-o|${slangc_out}")
         foreach(_arg ${incdirs} ${spirv_args} ${define_args})
             string(APPEND _blob_cmd "|${_arg}")
         endforeach()
@@ -105,12 +135,21 @@ function(ss_setup_spirv shared_dir vk_dir slangc spirv_dir embed_cpp debug)
             OUTPUT ${out}
             COMMAND ${CMAKE_COMMAND} -DSS_CMD=${_blob_cmd} -DSS_BLOB=${name}
                     -P ${SS_SPIRV_LIST_DIR}/SlangcRetry.cmake
-            DEPENDS ${dep_list}
-            COMMENT "SPIR-V ${name}"
+            ${post_cmd}
+            DEPENDS ${dep_list} ${post_deps}
+            COMMENT "${comment}"
             JOB_POOL ss_spirv
             VERBATIM)
         list(APPEND blob_outputs ${out})
     endforeach()
+
+    if(APPLE)
+        foreach(_key ${SS_SPIRV_PRECISE})
+            if(NOT _key IN_LIST precise_hits)
+                message(FATAL_ERROR "SS_SPIRV_PRECISE names ${_key}, which no blob has")
+            endif()
+        endforeach()
+    endif()
 
     list(LENGTH blob_outputs blob_count)
     message(STATUS "SPIR-V: ${blob_count} blobs to compile (per-blob, -j aware)")

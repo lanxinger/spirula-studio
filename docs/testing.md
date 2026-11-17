@@ -164,10 +164,18 @@ descent walked into the wrong subtree. The `[ForceUnroll]` on both child
 loops is what keeps the pop a value; see the first MoltenVK rule in
 `src/backend/vulkan/README.md`.
 
-Three tools -- `msloss_parity`, `optimgeo_parity`, `meshing_parity` -- pass
-only because `VulkanContext::init()` turns MoltenVK's default Metal fast-math
-off. `SS_VK_FAST_MATH=1` puts it back, and they fail again; that is the knob
-to reach for when measuring what the setting costs.
+MoltenVK gives every shader Metal fast math except the blobs
+`SS_SPIRV_PRECISE` marks precise (`src/backend/vulkan/README.md`, "Fast math,
+per shader"). With fast math on every shader (`SS_VK_FAST_MATH=1`),
+`meshing_parity` lands 2.4% of its codes off a CUDA reference (cap 2%) and
+`ppisp_parity` fails its own exact-clamp check. The rest of the list passes
+against CUDA either way (measured 2026-11-17): `msloss_parity` and
+`optimgeo_parity` used to fail there with fast math on, and keeping them
+precise costs no measurable time. Check a change to the list against a CUDA
+dump, not a Mac one: a precise blob is not the same blob under
+`SS_VK_FAST_MATH=0`, because SPIRV-Cross writes its transcendentals as
+`precise::` calls, and that alone puts 0.5% of `meshing_parity`'s codes off a
+Mac fast-math-off dump.
 
 Speed is a separate question from parity, and macOS answers it differently. Two
 kernel choices that cost nothing elsewhere cost an order of magnitude here, and
