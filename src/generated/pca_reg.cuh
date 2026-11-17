@@ -294,29 +294,29 @@ inline __device__ void pca_reg_build(uint i_5, uint n_1, float4  * sorted_2, uin
         {
             p_3 = first_0 - 1U;
         }
-        uint _S22a = 4U * p_3;
-        int _S22b;
+        uint _S25 = 4U * p_3;
+        int _S26;
         if(left_0)
         {
-            _S22b = int(0);
+            _S26 = int(0);
         }
         else
         {
-            _S22b = int(1);
+            _S26 = int(1);
         }
-        *(meta_0 + (_S22a + uint(_S22b))) = current_0;
+        *(meta_0 + (_S25 + uint(_S26))) = current_0;
         __threadfence();
-        int * _S25 = ranges_0 + p_3;
-        uint _S26;
+        int * _S27 = ranges_0 + p_3;
+        uint _S28;
         if(left_0)
         {
-            _S26 = first_0;
+            _S28 = first_0;
         }
         else
         {
-            _S26 = last_0;
+            _S28 = last_0;
         }
-        int other_0 = atomicCAS(_S25, int(-1), int(_S26));
+        int other_0 = atomicCAS(_S27, int(-1), int(_S28));
         if(other_0 == int(-1))
         {
             return;
@@ -330,42 +330,42 @@ inline __device__ void pca_reg_build(uint i_5, uint n_1, float4  * sorted_2, uin
             first_0 = uint(other_0);
         }
         __threadfence();
-        int _S27;
+        int _S29;
         if(left_0)
         {
-            _S27 = int(1);
+            _S29 = int(1);
         }
         else
         {
-            _S27 = int(0);
+            _S29 = int(0);
         }
-        int sib_0 = atomicOr(meta_0 + (_S22a + uint(_S27)), int(0));
-        uint _S29 = uint(sib_0);
-        if((_S29 & 2147483648U) != 0U)
+        int sib_0 = atomicOr(meta_0 + (_S25 + uint(_S29)), int(0));
+        uint _S30 = uint(sib_0);
+        if((_S30 & 2147483648U) != 0U)
         {
-            float3  q_0 = float3 {(*(sorted_2 + (_S29 & 2147483647U))).x, (*(sorted_2 + (_S29 & 2147483647U))).y, (*(sorted_2 + (_S29 & 2147483647U))).z};
-            float3  _S30 = max_0(hi_0, q_0);
+            float3  q_0 = float3 {(*(sorted_2 + (_S30 & 2147483647U))).x, (*(sorted_2 + (_S30 & 2147483647U))).y, (*(sorted_2 + (_S30 & 2147483647U))).z};
+            float3  _S31 = max_0(hi_0, q_0);
             lo_2 = min_0(lo_2, q_0);
-            hi_0 = _S30;
+            hi_0 = _S31;
         }
         else
         {
-            uint _S31 = 8U * _S29;
-            uint b0_0 = atomicOr(node_bits_0 + _S31, 0U);
-            uint b1_0 = atomicOr(node_bits_0 + (_S31 + 1U), 0U);
-            uint b2_0 = atomicOr(node_bits_0 + (_S31 + 2U), 0U);
-            uint b4_0 = atomicOr(node_bits_0 + (_S31 + 4U), 0U);
-            uint b5_0 = atomicOr(node_bits_0 + (_S31 + 5U), 0U);
-            uint b6_0 = atomicOr(node_bits_0 + (_S31 + 6U), 0U);
-            float3  _S32 = max_0(hi_0, make_float3 ((U32_asfloat((b4_0))), (U32_asfloat((b5_0))), (U32_asfloat((b6_0)))));
+            uint _S32 = 8U * _S30;
+            uint b0_0 = atomicOr(node_bits_0 + _S32, 0U);
+            uint b1_0 = atomicOr(node_bits_0 + (_S32 + 1U), 0U);
+            uint b2_0 = atomicOr(node_bits_0 + (_S32 + 2U), 0U);
+            uint b4_0 = atomicOr(node_bits_0 + (_S32 + 4U), 0U);
+            uint b5_0 = atomicOr(node_bits_0 + (_S32 + 5U), 0U);
+            uint b6_0 = atomicOr(node_bits_0 + (_S32 + 6U), 0U);
+            float3  _S33 = max_0(hi_0, make_float3 ((U32_asfloat((b4_0))), (U32_asfloat((b5_0))), (U32_asfloat((b6_0)))));
             lo_2 = min_0(lo_2, make_float3 ((U32_asfloat((b0_0))), (U32_asfloat((b1_0))), (U32_asfloat((b2_0)))));
-            hi_0 = _S32;
+            hi_0 = _S33;
         }
-        uint _S33 = 2U * p_3;
-        *(nodes_0 + _S33) = make_float4 (lo_2.x, lo_2.y, lo_2.z, 0.0f);
-        *(nodes_0 + (_S33 + 1U)) = make_float4 (hi_0.x, hi_0.y, hi_0.z, 0.0f);
-        *(meta_0 + (_S22a + 2U)) = int(first_0);
-        *(meta_0 + (_S22a + 3U)) = int(last_0);
+        uint _S34 = 2U * p_3;
+        *(nodes_0 + _S34) = make_float4 (lo_2.x, lo_2.y, lo_2.z, 0.0f);
+        *(nodes_0 + (_S34 + 1U)) = make_float4 (hi_0.x, hi_0.y, hi_0.z, 0.0f);
+        *(meta_0 + (_S25 + 2U)) = int(first_0);
+        *(meta_0 + (_S25 + 3U)) = int(last_0);
         int _S35 = int(p_3);
         bool _S36;
         if(first_0 == 0U)
