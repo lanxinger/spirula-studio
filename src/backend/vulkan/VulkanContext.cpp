@@ -235,18 +235,9 @@ void enable_portability(VkInstanceCreateInfo& ici,
     ici.ppEnabledExtensionNames = exts.data();
 }
 
-// MoltenVK tuning, on every instance this file creates. The names reach a
-// layer no other driver answers to, so this is inert everywhere else.
-//
-// Fast math: MoltenVK hands the Metal compiler -ffast-math for every shader
-// unless told otherwise, which is a wider licence than the CUDA build takes.
-// With it on, msloss_parity, optimgeo_parity and meshing_parity all exceed
-// their tolerance against the CUDA reference, and all three pass with it off.
-// Correctness first; SS_VK_FAST_MATH=1 puts it back for A/B timing.
-//
-// Log level: MoltenVK narrates instance and device lifetime at Info (2). The
-// enumeration instance alone would print two lines per run, so hold it to
-// errors (1) unless SS_VK_VERBOSE asks for the rest.
+// MoltenVK settings, inert on other drivers. Fast math is on demand (2): off
+// only for the blobs SpirvShaders.cmake marks precise (backend/vulkan/README.md).
+// Logging is held to errors unless SS_VK_VERBOSE: Info narrates every instance.
 struct MvkSettings {
     int32_t fast_math;
     int32_t log_level;
@@ -256,7 +247,7 @@ struct MvkSettings {
 
     MvkSettings() {
         const char* fm = spirula::env("VK_FAST_MATH");
-        fast_math = fm && fm[0] == '1' ? 1 : 0;
+        fast_math = fm && fm[0] >= '0' && fm[0] <= '2' ? fm[0] - '0' : 2;
         log_level = spirula::env("VK_VERBOSE") ? 2 : 1;
         items[0] = {"MoltenVK", "MVK_CONFIG_FAST_MATH_ENABLED",
                     VK_LAYER_SETTING_TYPE_INT32_EXT, 1, &fast_math};

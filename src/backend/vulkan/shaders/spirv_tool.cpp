@@ -1,45 +1,11 @@
-// Compiles the Slang shaders and embeds the SPIR-V, natively.
-//
-// A single self-contained C++17 host tool (no dependencies beyond the standard
-// library), so the Vulkan (SS_BACKEND=vulkan) build needs no Python.
-// CMake compiles this once at configure time (try_compile + COPY_FILE) and uses
-// it in two modes:
-//
+// The SPIR-V build's host tool: one dependency-free C++17 program, so the
+// Vulkan build needs no Python. CMake compiles it at configure time
+// (ss_build_spirv_tool, cmake/SsSlang.cmake). Modes, each described at its
+// run_* function:
 //   discover -I <dir>... <source.slang>...
-//       Scan the compute shaders and print, one blob per line to stdout:
-//           <name>\t<source>\t<entry>\t<defines>\t<dep1> <dep2> ...
-//       CMake turns each line into its own slangc custom command (one Ninja
-//       edge per blob, so the build's -j governs how many slangc run at once,
-//       and Ninja prints "[n/m] SPIR-V <name>" as each finishes). <defines> and
-//       <deps> are space-separated (deps = the source's #include closure).
-//
-//   embed <out.cpp> --list <listfile>
-//       Read the compiled .spv blobs named in <listfile>, drop the .noint64
-//       variants whose base does not actually declare the Int64 capability,
-//       verify no capability leaks, and emit the C++ translation unit
-//       consumed by VulkanPipelines.cpp.
-//
-//   embed --nn <tag> <out.cpp> --list <listfile>
-//       The same, for a library of the inference layer (cmake/SsNn.cmake).
-//       Emits a blob table named after <tag>, which the owning library hands
-//       to the process registry nn/vk/EmbeddedSpirv.h declares -- so src/nn/,
-//       src/sam/ and src/video/ can each contribute shaders to one pipeline
-//       cache, and <tag> keeps their symbols distinct.
-//
-//   embed --sfm <out.cpp> --list <listfile>
-//       The same, for the SfM module (cmake/SsSfm.cmake). Its blobs are
-//       whole-module compiles with no feature variants, so the variant gate and
-//       the capability audit -- both statements about the engine's kernels --
-//       are skipped, and the emitted TU is the one sfm/vk/EmbeddedSpirv.h
-//       declares.
-//
+//   embed [--nn <tag> | --sfm] <out.cpp> --list <listfile>
 //   nocontract <in.spv> <out.spv>
-//       Decorate every float arithmetic result with NoContraction. slangc does
-//       not emit it and some drivers then contract or rearrange float
-//       expressions, which destroys the error-free transforms the SfM bundle
-//       adjuster's emulated double-float type is built on. Used only by the
-//       SfM `df` blobs; see src/sfm/ba/README.md.
-//
+//   precise <in.spv> <out.spv>
 // backend/vulkan/README.md has the why behind the blob naming, the feature
 // variants and the capability audit.
 
@@ -354,23 +320,40 @@ bool is_annotation(uint32_t op) {
 // must precede. Only used as a fallback when a module has no annotations.
 bool is_type_decl(uint32_t op) { return op >= OpTypeVoid && op <= OpTypeForwardPointer; }
 
-int run_nocontract(const std::string& in, const std::string& out) {
+// A byte-swapped module would need swapping on read and write; slangc emits
+// host order, so one is treated as corrupt.
+bool read_module(const char* mode, const std::string& in, std::vector<uint32_t>& w) {
     bool ok = false;
     std::string bytes = read_file(in, &ok);
     if (!ok || bytes.size() % 4) {
-        std::fprintf(stderr, "nocontract: cannot read %s as a word-aligned module\n",
+        std::fprintf(stderr, "%s: cannot read %s as a word-aligned module\n", mode,
                      in.c_str());
-        return 1;
+        return false;
     }
-    std::vector<uint32_t> w(bytes.size() / 4);
+    w.resize(bytes.size() / 4);
     std::memcpy(w.data(), bytes.data(), bytes.size());
     if (w.size() < 5 || w[0] != 0x07230203u) {
-        // A byte-swapped module would need swapping on read and write; slangc
-        // emits host order, so treat this as a corrupt input instead.
-        std::fprintf(stderr, "nocontract: %s is not a host-order SPIR-V module\n",
+        std::fprintf(stderr, "%s: %s is not a host-order SPIR-V module\n", mode,
                      in.c_str());
-        return 1;
+        return false;
     }
+    return true;
+}
+
+bool write_module(const char* mode, const std::string& out,
+                  const std::vector<uint32_t>& w) {
+    std::ofstream f(out, std::ios::binary | std::ios::trunc);
+    if (f) f.write((const char*)w.data(), (std::streamsize)w.size() * 4);
+    if (!f) std::fprintf(stderr, "%s: cannot write %s\n", mode, out.c_str());
+    return (bool)f;
+}
+
+// Decorates every float arithmetic result NoContraction. slangc emits none, and
+// a driver that contracts breaks the error-free transforms the SfM df blobs are
+// built on (src/sfm/ba/README.md).
+int run_nocontract(const std::string& in, const std::string& out) {
+    std::vector<uint32_t> w;
+    if (!read_module("nocontract", in, w)) return 1;
 
     // GLSL.std.450 import id, so OpExtInst Fma can be recognized. Modules
     // importing several sets are handled: only this one's Fma is matched.
@@ -418,17 +401,82 @@ int run_nocontract(const std::string& in, const std::string& out) {
         outw.push_back(kDecorationNoContraction);
     }
     outw.insert(outw.end(), w.begin() + (long)pos, w.end());
+    return write_module("nocontract", out, outw) ? 0 : 1;
+}
 
-    std::ofstream f(out, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        std::fprintf(stderr, "nocontract: cannot write %s\n", out.c_str());
+// ---- precise mode --------------------------------------------------------
+enum : uint32_t {
+    OpEntryPoint = 15,
+    OpExecutionMode = 16,
+    OpCapability = 17,
+    OpExecutionModeId = 331,
+    kCapSignedZeroInfNanPreserve = 4466,
+    kModeSignedZeroInfNanPreserve = 4461,
+};
+
+// Adds SignedZeroInfNanPreserve (fp32) to every entry point. ContractionOff is
+// left out: SPIR-V allows it only in Kernel modules, and MoltenVK already gives
+// a preserving shader Metal's safe math mode.
+int run_precise(const std::string& in, const std::string& out) {
+    std::vector<uint32_t> w;
+    if (!read_module("precise", in, w)) return 1;
+    // The execution mode is core from SPIR-V 1.4; before that it needs
+    // SPV_KHR_float_controls, which nothing here declares.
+    if (w[1] < 0x00010400u) {
+        std::fprintf(stderr, "precise: %s is SPIR-V %u.%u, need 1.4+\n", in.c_str(),
+                     (w[1] >> 16) & 0xffu, (w[1] >> 8) & 0xffu);
         return 1;
     }
-    f.write((const char*)outw.data(), (std::streamsize)outw.size() * 4);
-    return 0;
+    bool has_cap = false;
+    size_t caps_end = 0, modes_end = 0;
+    std::vector<uint32_t> entries;
+    std::set<uint32_t> marked;
+    for (size_t i = 5; i < w.size();) {
+        uint32_t len = w[i] >> 16, op = w[i] & 0xffffu;
+        if (len == 0 || i + len > w.size()) {
+            std::fprintf(stderr, "precise: malformed instruction in %s\n", in.c_str());
+            return 1;
+        }
+        if (op == OpCapability) {
+            has_cap |= w[i + 1] == kCapSignedZeroInfNanPreserve;
+            caps_end = i + len;
+        } else if (op == OpEntryPoint) {
+            entries.push_back(w[i + 2]);
+            modes_end = i + len;
+        } else if (op == OpExecutionMode || op == OpExecutionModeId) {
+            if (op == OpExecutionMode && w[i + 2] == kModeSignedZeroInfNanPreserve)
+                marked.insert(w[i + 1]);
+            modes_end = i + len;
+        }
+        i += len;
+    }
+    if (!caps_end || entries.empty()) {
+        std::fprintf(stderr, "precise: no capability or entry point in %s\n", in.c_str());
+        return 1;
+    }
+
+    std::vector<uint32_t> outw(w.begin(), w.begin() + (long)caps_end);
+    if (!has_cap) {
+        outw.push_back((2u << 16) | OpCapability);
+        outw.push_back(kCapSignedZeroInfNanPreserve);
+    }
+    outw.insert(outw.end(), w.begin() + (long)caps_end, w.begin() + (long)modes_end);
+    for (uint32_t e : entries) {
+        if (marked.count(e)) continue;
+        outw.push_back((4u << 16) | OpExecutionMode);
+        outw.push_back(e);
+        outw.push_back(kModeSignedZeroInfNanPreserve);
+        outw.push_back(32);  // float width
+    }
+    outw.insert(outw.end(), w.begin() + (long)modes_end, w.end());
+    return write_module("precise", out, outw) ? 0 : 1;
 }
 
 // ---- discover mode -------------------------------------------------------
+
+// Prints <name>\t<source>\t<entry>\t<defines>\t<deps>, one blob per line;
+// defines and deps (the #include closure) are space-separated, "-" for no
+// defines. SpirvShaders.cmake makes each line its own slangc edge.
 int run_discover(const std::vector<std::string>& args) {
     std::vector<std::string> incdirs, sources;
     for (size_t i = 0; i < args.size(); i++) {
@@ -536,6 +584,9 @@ bool read_timing_table(const std::string& path, std::set<std::string>& out) {
     return true;
 }
 
+// Emits the listed .spv blobs as one C++ TU, after the noint64 gate and the
+// capability audit. --nn <tag> and --sfm skip both and emit the inference
+// layer's table (nn/vk/EmbeddedSpirv.h) or the SfM module's instead.
 int run_embed(const std::vector<std::string>& args) {
     std::string out_cpp, listfile, nn_tag, timing_table;
     bool sfm = false, nn = false;
@@ -761,7 +812,7 @@ int run_embed(const std::vector<std::string>& args) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s discover|embed|nocontract ...\n", argv[0]);
+        std::fprintf(stderr, "usage: %s discover|embed|nocontract|precise ...\n", argv[0]);
         return 2;
     }
     std::vector<std::string> args(argv + 2, argv + argc);
@@ -774,6 +825,13 @@ int main(int argc, char** argv) {
             return 2;
         }
         return run_nocontract(args[0], args[1]);
+    }
+    if (mode == "precise") {
+        if (args.size() < 2) {
+            std::fprintf(stderr, "precise: usage: precise <in.spv> <out.spv>\n");
+            return 2;
+        }
+        return run_precise(args[0], args[1]);
     }
     std::fprintf(stderr, "unknown mode: %s\n", mode.c_str());
     return 2;

@@ -364,11 +364,31 @@ element: `InterlockedOr(meta[p].y, ...)` through an `int4*` becomes
 element requested", and again the whole library fails. `pca_reg_build`
 addresses those rows as `int*` words instead.
 
-Beyond those, MoltenVK compiles every shader with Metal fast-math unless
-told not to. `VulkanContext::init()` turns it off through
-`VK_EXT_layer_settings`, because three parity tools exceed their tolerance
-with it on; `SS_VK_FAST_MATH=1` restores it for A/B timing. See
-`docs/testing.md` for what still differs on Apple silicon.
+### Fast math, per shader
+
+MoltenVK can compile a shader with Metal fast math, which is a wider licence
+than the CUDA build takes. `VulkanContext.cpp` sets
+`MVK_CONFIG_FAST_MATH_ENABLED` to 2, on demand, through
+`VK_EXT_layer_settings`: every shader gets fast math except one whose SPIR-V
+carries the `SignedZeroInfNanPreserve` execution mode. MoltenVK compiles that
+one with Metal's safe math mode, and SPIRV-Cross writes its transcendentals as
+`precise::exp`, `precise::sqrt` and so on.
+
+slangc never emits the mode (`-fp-mode precise` included), so on macOS
+`shaders/SpirvShaders.cmake` adds it after compiling each blob named in
+`SS_SPIRV_PRECISE` (`spirv_tool precise`). The list is what parity needs:
+with fast math on, `meshing_parity` and `ppisp_parity` fail against CUDA, and
+`msloss_parity` and `optimgeo_parity` used to. `fpbo`, `rasterize_bwd`, `fused_ssim`
+and the 2D `projection_packed_fwd` are not on it, and they are most of the
+speedup: a 30k-step garden run takes 21:20 on an M4 Pro against 27:17 with fast
+math off everywhere. `ContractionOff` is not added: SPIR-V allows it only in
+Kernel modules, and MoltenVK already gives a preserving shader Metal's safe
+math mode.
+
+`SS_VK_FAST_MATH=0` turns fast math off for every shader and `1` turns it on
+for every shader, for A/B timing. A precise blob is not bit-identical to the
+same blob under `0`, because of those `precise::` calls, so check a change to
+the list against a CUDA reference rather than a Mac dump (`docs/testing.md`).
 
 ## Sort / scan (backend/common/SortScan.h implementation)
 
