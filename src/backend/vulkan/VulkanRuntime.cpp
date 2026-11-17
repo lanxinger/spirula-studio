@@ -1162,8 +1162,10 @@ struct DispatchTiming {
     std::unordered_set<std::string> names;   // node-based: c_str() stays put
 };
 
+// Never destroyed: first built after Context::get()'s static, so it would die
+// before ~Context's runtime_shutdown() locks it (EINVAL on macOS).
 DispatchTiming& dispatch_timing() {
-    static DispatchTiming t;
+    static DispatchTiming& t = *new DispatchTiming;
     return t;
 }
 
