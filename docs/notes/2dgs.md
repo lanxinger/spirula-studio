@@ -25,15 +25,17 @@ backends. `spirula train 2dgs` is the preset with the geometry losses on.
   depth-normal consistency (`normal_reg_weight`) and normal supervision were
   in the per-pixel loss with a `pred_normal` slot no primitive filled. 2dgs
   renders normals (`RenderOutputType::RGB_DN`) and fills it. 3dgut fills it
-  too, with its shortest axis facing the ray, on a step one of those terms
-  reads it (`engine_loss_reads_render_normal`, `Vanilla3DGUTNormal`);
+  too, with `-normalize(Sigma^-1 d)` (its short axis once flat),
+  on a step one of those terms reads it
+  (`engine_loss_reads_render_normal`, `Vanilla3DGUTNormal`);
   3dgs and mip render none, since their screen rows carry no orientation.
 
 ## The fragment
 
 Shared Slang, `src/shaders/projection_utils.slang` (`evaluate_2dgs` and its
 fused VJP); the screen bounds are `projection_3dgs<..., surfel>` in
-`primitive_3dgs.slang`.
+`primitive_3dgs.slang`, exact for a disc under any lens
+([footprint.md](footprint.md)).
 
 - tangent frame `tu, tv, n` = columns of `R(quat)`, plane through `mean`
 - `t = dot(mean - o, n) / dot(d, n)`, `p = o + t d`,
